@@ -3,7 +3,7 @@ module github.com/scale-flow/dj
 go 1.26.1
 
 require (
-	github.com/Scale-Flow/marten v0.0.0-local
+	github.com/Scale-Flow/marten v0.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 )
@@ -27,5 +27,3 @@ require (
 	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 )
-
-replace github.com/Scale-Flow/marten => /Users/brettmcdowell/Dev/Marten

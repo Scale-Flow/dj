@@ -21,7 +21,7 @@ func TestCmdNext_Success(t *testing.T) {
 
 	tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 	client := dj.NewClient(tc, nil)
-	var result dj.
+	var result json.RawMessage
 	err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -34,7 +34,7 @@ func TestCmdNext_ServerError(t *testing.T) {
 
 	tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 	client := dj.NewClient(tc, nil)
-	var result dj.
+	var result json.RawMessage
 	err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -70,7 +70,7 @@ func TestCmdNext_ErrorMapping(t *testing.T) {
 
 			tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 			client := dj.NewClient(tc, nil)
-			var result dj.
+			var result json.RawMessage
 			err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 			if err == nil {
 				t.Fatal("expected error")
