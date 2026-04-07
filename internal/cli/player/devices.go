@@ -3,15 +3,13 @@
 package player
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func newDevicesCmd() *cobra.Command {
@@ -22,7 +20,6 @@ func newDevicesCmd() *cobra.Command {
 			return runDevices(cmd, args)
 		},
 	}
-
 
 	return cmd
 }
@@ -38,12 +35,14 @@ func runDevices(cmd *cobra.Command, args []string) error {
 	}
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:       "oauth2",
-		ProfileName:    rctx.ProfileName,
-		OAuthStorePath: storePath,
+		Strategy:          "oauth2",
+		ConfigDir:         "dj",
+		ProfileName:       rctx.ProfileName,
+		AllowFileFallback: true,
+		OAuthStorePath:    storePath,
+		OAuthMetadataPath: oauthMetadataPath(storePath),
 		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL:     "https://accounts.spotify.com/api/token",
-			ClientID:     os.Getenv("DJ_CLIENT_ID"),
+			TokenURL: "https://accounts.spotify.com/api/token",
 		},
 	})
 	if err != nil {
@@ -54,14 +53,12 @@ func runDevices(cmd *cobra.Command, args []string) error {
 	client := dj.NewClient(t, rctx.Extra)
 
 	if cmdutil.DryRun(cmd) {
-		pathParams := map[string]string{
-		}
+		pathParams := map[string]string{}
 		fullPath := client.BuildPath("/v1/me/player/devices", pathParams)
 		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
 	}
 
-	pathParams := map[string]string{
-	}
+	pathParams := map[string]string{}
 	fullPath := client.BuildPath("/v1/me/player/devices", pathParams)
 
 	var result dj.PlaybackDevice

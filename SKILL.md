@@ -5,24 +5,6 @@ description: CLI tool for Spotify player control and music lookup CLI
 
 # dj CLI Skill
 
-## Install
-
-Requires Go 1.26+:
-
-```bash
-go install github.com/scale-flow/dj/cmd/dj@latest
-```
-
-## Setup
-
-1. Create a Spotify app at https://developer.spotify.com/dashboard
-2. Run `dj auth login` and enter your Client ID and Secret when prompted
-3. Authorize in the browser that opens
-
-Tokens are stored in the OS keychain when available, falling back to `~/.config/dj/oauth-tokens.json`.
-
-Run `dj auth status` to verify credentials are active.
-
 ## Available Commands
 - `dj player now-playing` — Show the currently playing track
 - `dj player status` — Show full playback state including device, shuffle, and repeat

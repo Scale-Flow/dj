@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/testutil"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func TestCmdNowPlaying_Success(t *testing.T) {

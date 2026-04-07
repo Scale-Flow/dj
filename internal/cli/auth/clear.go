@@ -3,6 +3,9 @@
 package auth
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
@@ -31,13 +34,51 @@ func runAuthClear(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
-	store := oauth.NewOAuthStore(storePath)
-	if err := store.Delete(rctx.ProfileName); err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
+
+	var clearErrs []error
+	keychainStore := oauth.NewKeychainStore("dj")
+	if err := keychainStore.Delete(rctx.ProfileName); err != nil {
+		if !shouldIgnoreOAuthKeychainError(err) {
+			clearErrs = append(clearErrs, err)
+		}
+	}
+	fileStore := oauth.NewOAuthStore(storePath)
+	if err := fileStore.Delete(rctx.ProfileName); err != nil {
+		clearErrs = append(clearErrs, err)
+	}
+	metaStore := oauth.NewMetadataStore(oauth.MetadataPathForTokenStore(storePath))
+	if err := metaStore.Delete(rctx.ProfileName); err != nil {
+		clearErrs = append(clearErrs, err)
+	}
+	clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
+	clientCredKeychainStore := oauth.NewClientCredentialKeychainStore("dj")
+	if err := clientCredKeychainStore.Delete(rctx.ProfileName); err != nil {
+		if !shouldIgnoreOAuthKeychainError(err) {
+			clearErrs = append(clearErrs, err)
+		}
+	}
+	clientCredFileStore := oauth.NewClientCredentialFileStore(clientCredPath)
+	if err := clientCredFileStore.Delete(rctx.ProfileName); err != nil {
+		clearErrs = append(clearErrs, err)
+	}
+	if len(clearErrs) > 0 {
+		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, errors.Join(clearErrs...).Error())
 	}
 
 	return cmdutil.WriteSuccess(cmd, map[string]any{
 		"profile": rctx.ProfileName,
 		"status":  "cleared",
 	})
+}
+
+func shouldIgnoreOAuthKeychainError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unsupported platform") ||
+		strings.Contains(msg, "keychain backend unavailable") ||
+		strings.Contains(msg, "credential backend unavailable") ||
+		strings.Contains(msg, "no credential backend available") ||
+		strings.Contains(msg, "the name org.freedesktop.secrets was not provided by any .service files")
 }

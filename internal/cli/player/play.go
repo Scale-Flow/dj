@@ -3,17 +3,14 @@
 package player
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
 
-	"github.com/scale-flow/dj/internal/dj"
-	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func newPlayCmd() *cobra.Command {
@@ -44,12 +41,14 @@ func runPlay(cmd *cobra.Command, args []string) error {
 	}
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:       "oauth2",
-		ProfileName:    rctx.ProfileName,
-		OAuthStorePath: storePath,
+		Strategy:          "oauth2",
+		ConfigDir:         "dj",
+		ProfileName:       rctx.ProfileName,
+		AllowFileFallback: true,
+		OAuthStorePath:    storePath,
+		OAuthMetadataPath: oauthMetadataPath(storePath),
 		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL:     "https://accounts.spotify.com/api/token",
-			ClientID:     os.Getenv("DJ_CLIENT_ID"),
+			TokenURL: "https://accounts.spotify.com/api/token",
 		},
 	})
 	if err != nil {
@@ -64,35 +63,43 @@ func runPlay(cmd *cobra.Command, args []string) error {
 	flagPositionMs, _ := cmd.Flags().GetInt("position-ms")
 
 	if cmdutil.DryRun(cmd) {
-		body := map[string]any{
-			"context_uri": flagContextURI,
-			"uris": flagUris,
-			"position_ms": flagPositionMs,
+		body := map[string]any{}
+		if flagContextURI != "" {
+			body["context_uri"] = flagContextURI
 		}
-		pathParams := map[string]string{
+		if flagUris != "" {
+			body["uris"] = flagUris
 		}
+		if flagPositionMs != 0 {
+			body["position_ms"] = flagPositionMs
+		}
+		pathParams := map[string]string{}
 		fullPath := client.BuildPath("/v1/me/player/play", pathParams)
-		return cmdutil.WriteDryRun(cmd, "POST", rctx.BaseURL+fullPath, body)
+		return cmdutil.WriteDryRun(cmd, "PUT", rctx.BaseURL+fullPath, body)
 	}
 
 	if !cliutil.ConfirmAction(cmd, "PUT /me/player/play") {
 		return nil
 	}
 
-	body := map[string]any{
-		"context_uri": flagContextURI,
-		"uris": flagUris,
-		"position_ms": flagPositionMs,
+	body := map[string]any{}
+	if flagContextURI != "" {
+		body["context_uri"] = flagContextURI
 	}
-	pathParams := map[string]string{
+	if flagUris != "" {
+		body["uris"] = flagUris
 	}
+	if flagPositionMs != 0 {
+		body["position_ms"] = flagPositionMs
+	}
+	pathParams := map[string]string{}
 	fullPath := client.BuildPath("/v1/me/player/play", pathParams)
 	queryParams := map[string]string{
-		"device_id": fmt.Sprintf("%v", flagDeviceID),
+		"device_id": flagDeviceID,
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 
-	if err := client.DoPost(cmd.Context(), fullPath, body, nil); err != nil {
+	if err := client.DoMethod(cmd.Context(), "PUT", fullPath, body, nil); err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeServer, err.Error())
 	}
 	return cmdutil.WriteSuccess(cmd, nil)

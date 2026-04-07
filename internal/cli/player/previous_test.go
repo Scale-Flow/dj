@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/testutil"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func TestCmdPrevious_Success(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCmdPrevious_Success(t *testing.T) {
 
 	tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 	client := dj.NewClient(tc, nil)
-	var result json.RawMessage
+	var result map[string]any
 	err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -34,7 +34,7 @@ func TestCmdPrevious_ServerError(t *testing.T) {
 
 	tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 	client := dj.NewClient(tc, nil)
-	var result json.RawMessage
+	var result map[string]any
 	err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -70,7 +70,7 @@ func TestCmdPrevious_ErrorMapping(t *testing.T) {
 
 			tc := transport.NewClientWithDoer(srv.URL, "test-token", "Authorization", "Bearer ", srv.Client())
 			client := dj.NewClient(tc, nil)
-			var result json.RawMessage
+			var result map[string]any
 			err := client.DoPost(context.Background(), "/test", map[string]any{}, &result)
 			if err == nil {
 				t.Fatal("expected error")

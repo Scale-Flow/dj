@@ -3,9 +3,14 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +27,7 @@ func newAuthLoginCmd() *cobra.Command {
 			return runAuthLogin(cmd, args)
 		},
 	}
+	cmd.Flags().Bool("local", false, "Use localhost callback server instead of manual code paste")
 	return cmd
 }
 
@@ -31,26 +37,145 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
 
-	clientID := os.Getenv("DJ_CLIENT_ID")
-	if clientID == "" {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, "DJ_CLIENT_ID environment variable not set")
+	creds, err := resolveClientCredentials(cmd, rctx.ProfileName)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
+	}
+	useLocal, _ := cmd.Flags().GetBool("local")
+	if useLocal {
+		return runLocalCallbackFlow(cmd, rctx.ProfileName, creds)
 	}
 
-	clientSecret := ""
-	clientSecret = os.Getenv("DJ_CLIENT_SECRET")
-
-	return runBrowserFlow(cmd, rctx.ProfileName, clientID, clientSecret)
+	return runManualCodeFlow(cmd, rctx.ProfileName, creds)
 }
 
-func runBrowserFlow(cmd *cobra.Command, profile, clientID, clientSecret string) error {
-	redirectPort := 8085
-	redirectURI := fmt.Sprintf("http://localhost:%d/callback", redirectPort)
+func resolveClientCredentials(cmd *cobra.Command, profile string) (oauth.ClientCredentials, error) {
+	// 1. Env vars always win
+	envID := os.Getenv("DJ_CLIENT_ID")
+	envSecret := os.Getenv("DJ_CLIENT_SECRET")
+	if envID != "" {
+		return oauth.ClientCredentials{ClientID: envID, ClientSecret: envSecret}, nil
+	}
+
+	// 2. Check stored credentials
+	storePath, err := oauthStorePath()
+	if err == nil {
+		clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
+		creds := cmdutil.LoadClientCredentials("dj", clientCredPath, profile)
+		if creds != nil {
+			in, ok := cmd.InOrStdin().(*os.File)
+			if ok && cmdutil.IsInteractiveInput(in) {
+				update, promptErr := cmdutil.ConfirmPrompt(in, cmd.ErrOrStderr(), "Stored credentials found. Update? [y/N]: ")
+				if promptErr == nil && !update {
+					return *creds, nil
+				}
+			} else {
+				return *creds, nil
+			}
+		}
+	}
+
+	// 3. Interactive prompt
+	clientID, err := cmdutil.ResolveEnvOrPrompt(cmd, "DJ_CLIENT_ID", "Client ID", false, true)
+	if err != nil {
+		return oauth.ClientCredentials{}, err
+	}
+	clientSecret := ""
+	clientSecret, err = cmdutil.ResolveEnvOrPrompt(cmd, "DJ_CLIENT_SECRET", "Client Secret", true, false)
+	if err != nil {
+		return oauth.ClientCredentials{}, err
+	}
+	return oauth.ClientCredentials{ClientID: clientID, ClientSecret: clientSecret}, nil
+}
+
+func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCredentials) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+
+	redirectURI := "https://martencli.netlify.app/callback"
 
 	cfg := oauth.AuthCodeConfig{
 		AuthURL:      "https://accounts.spotify.com/authorize",
 		TokenURL:     "https://accounts.spotify.com/api/token",
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		ClientID:     creds.ClientID,
+		ClientSecret: creds.ClientSecret,
+		RedirectURI:  redirectURI,
+		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
+		Quirks:       oauth.Quirks{
+			ForceConsent: false,
+		},
+	}
+
+	result, err := oauth.BuildAuthURLWithState(cfg)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	}
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\n", result.URL)
+
+	// Race: poll the passthrough service vs manual paste.
+	// Whichever delivers the code first wins.
+	codeCh := make(chan string, 2)
+	// Start polling the passthrough service in the background
+	pollCtx, pollCancel := context.WithCancel(ctx)
+	defer pollCancel()
+	go func() {
+		code, err := oauth.PollForCode(pollCtx, "https://martencli.netlify.app/api/poll", result.State, 2*time.Second, 120*time.Second)
+		if err == nil {
+			codeCh <- code
+		}
+	}()
+
+	// Start paste prompt in parallel (only if interactive)
+	in, ok := cmd.InOrStdin().(*os.File)
+	isInteractive := ok && cmdutil.IsInteractiveInput(in)
+	if isInteractive {
+		go func() {
+			code, err := oauth.PromptForCode(in, cmd.ErrOrStderr())
+			if err == nil {
+				codeCh <- code
+			}
+		}()
+	}
+
+	// Wait for whichever completes first
+	var code string
+	select {
+	case code = <-codeCh:
+	case <-ctx.Done():
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
+	}
+
+	ts, err := oauth.ExchangeCode(ctx, cfg, code, result.Verifier)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	}
+
+	source, err := persistOAuthLogin(profile, creds, ts)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
+	}
+
+	return cmdutil.WriteSuccess(cmd, map[string]any{
+		"profile": profile,
+		"source":  source,
+		"status":  "authenticated",
+		"scopes":  ts.Scopes,
+	})
+}
+
+func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.ClientCredentials) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+
+	redirectPort := 8085
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", redirectPort)
+
+	cfg := oauth.AuthCodeConfig{
+		AuthURL:      "https://accounts.spotify.com/authorize",
+		TokenURL:     "https://accounts.spotify.com/api/token",
+		ClientID:     creds.ClientID,
+		ClientSecret: creds.ClientSecret,
 		RedirectURI:  redirectURI,
 		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
 		Quirks:       oauth.Quirks{
@@ -69,34 +194,97 @@ func runBrowserFlow(cmd *cobra.Command, profile, clientID, clientSecret string) 
 	}
 	defer cb.Close()
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization...\n", authURL)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization (Ctrl+C to cancel)...\n", authURL)
 
 	var code string
 	select {
 	case code = <-cb.CodeCh:
 	case err := <-cb.ErrCh:
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	case <-ctx.Done():
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
 	}
 
-	ts, err := oauth.ExchangeCode(cmd.Context(), cfg, code, verifier)
+	ts, err := oauth.ExchangeCode(ctx, cfg, code, verifier)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
 
-	storePath, err := oauthStorePath()
+	source, err := persistOAuthLogin(profile, creds, ts)
 	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
-	}
-	store := oauth.NewOAuthStore(storePath)
-	if err := store.Save(profile, *ts); err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
 
 	return cmdutil.WriteSuccess(cmd, map[string]any{
 		"profile": profile,
+		"source":  source,
 		"status":  "authenticated",
 		"scopes":  ts.Scopes,
 	})
+}
+
+func persistOAuthLogin(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+	storePath, err := oauthStorePath()
+	if err != nil {
+		return "", err
+	}
+
+	backend, err := cmdutil.SelectOAuthWriteBackend("", true, true, true)
+	if err != nil {
+		return "", err
+	}
+
+	fileStore := oauth.NewOAuthStore(storePath)
+	var store oauth.Store
+	switch backend {
+	case cmdutil.CredentialBackendKeychain:
+		store = oauth.NewKeychainStore("dj")
+	case cmdutil.CredentialBackendFile:
+		store = fileStore
+	default:
+		return "", fmt.Errorf("unsupported oauth backend %q", backend)
+	}
+
+	if err := store.Save(profile, *ts); err != nil {
+		if backend == cmdutil.CredentialBackendKeychain && shouldFallbackOAuthLoginToFile(err) {
+			if err := fileStore.Save(profile, *ts); err != nil {
+				return "", err
+			}
+			store = fileStore
+			backend = cmdutil.CredentialBackendFile
+		} else {
+			return "", err
+		}
+	}
+
+	metaStore := oauth.NewMetadataStore(oauthMetadataPath(storePath))
+	if err := metaStore.Save(profile, oauth.MergeMetadata(oauth.Metadata{}, ts, creds.ClientID)); err != nil {
+		if deleteErr := store.Delete(profile); deleteErr != nil {
+			return "", errors.Join(err, deleteErr)
+		}
+		return "", err
+	}
+
+	// Persist client credentials (same backend selection + fallback as tokens)
+	clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
+	clientCredFileStore := oauth.NewClientCredentialFileStore(clientCredPath)
+	switch backend {
+	case cmdutil.CredentialBackendKeychain:
+		clientCredKeychainStore := oauth.NewClientCredentialKeychainStore("dj")
+		if credErr := clientCredKeychainStore.Save(profile, creds); credErr != nil {
+			if shouldFallbackOAuthLoginToFile(credErr) {
+				if fileErr := clientCredFileStore.Save(profile, creds); fileErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not persist client credentials: %s\n", fileErr)
+				}
+			}
+		}
+	case cmdutil.CredentialBackendFile:
+		if fileErr := clientCredFileStore.Save(profile, creds); fileErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not persist client credentials: %s\n", fileErr)
+		}
+	}
+
+	return string(backend), nil
 }
 
 func oauthStorePath() (string, error) {
@@ -108,4 +296,20 @@ func oauthStorePath() (string, error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "dj", "oauth-tokens.json"), nil
+}
+
+func oauthMetadataPath(tokenPath string) string {
+	return oauth.MetadataPathForTokenStore(tokenPath)
+}
+
+func shouldFallbackOAuthLoginToFile(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unsupported platform") ||
+		strings.Contains(msg, "keychain backend unavailable") ||
+		strings.Contains(msg, "credential backend unavailable") ||
+		strings.Contains(msg, "no credential backend available") ||
+		strings.Contains(msg, "the name org.freedesktop.secrets was not provided by any .service files")
 }

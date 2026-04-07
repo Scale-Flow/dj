@@ -6,12 +6,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Scale-Flow/marten/pkg/oauth"
 )
 
 func oauthStorePath() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "dj", "oauth-tokens.json"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "dj", "oauth-tokens.json"), nil
+}
+
+func oauthMetadataPath(tokenPath string) string {
+	return oauth.MetadataPathForTokenStore(tokenPath)
 }

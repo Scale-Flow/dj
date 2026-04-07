@@ -4,7 +4,6 @@ package tracks
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -42,12 +41,14 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:       "oauth2",
-		ProfileName:    rctx.ProfileName,
-		OAuthStorePath: storePath,
+		Strategy:          "oauth2",
+		ConfigDir:         "dj",
+		ProfileName:       rctx.ProfileName,
+		AllowFileFallback: true,
+		OAuthStorePath:    storePath,
+		OAuthMetadataPath: oauthMetadataPath(storePath),
 		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL:     "https://accounts.spotify.com/api/token",
-			ClientID:     os.Getenv("DJ_CLIENT_ID"),
+			TokenURL: "https://accounts.spotify.com/api/token",
 		},
 	})
 	if err != nil {
@@ -72,7 +73,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 	fullPath := client.BuildPath("/v1/tracks/{id}", pathParams)
 	queryParams := map[string]string{
-		"market": fmt.Sprintf("%v", flagMarket),
+		"market": flagMarket,
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 

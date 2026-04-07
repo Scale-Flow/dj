@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -46,12 +45,14 @@ func runTracks(cmd *cobra.Command, args []string) error {
 	}
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:       "oauth2",
-		ProfileName:    rctx.ProfileName,
-		OAuthStorePath: storePath,
+		Strategy:          "oauth2",
+		ConfigDir:         "dj",
+		ProfileName:       rctx.ProfileName,
+		AllowFileFallback: true,
+		OAuthStorePath:    storePath,
+		OAuthMetadataPath: oauthMetadataPath(storePath),
 		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL:     "https://accounts.spotify.com/api/token",
-			ClientID:     os.Getenv("DJ_CLIENT_ID"),
+			TokenURL: "https://accounts.spotify.com/api/token",
 		},
 	})
 	if err != nil {
@@ -82,7 +83,7 @@ func runTracks(cmd *cobra.Command, args []string) error {
 	if pf.All {
 		items, meta, err := cmdutil.ListAll[dj.TrackSimplified](cmd.Context(), func(ctx context.Context, page int) ([]dj.TrackSimplified, *contract.Pagination, error) {
 			queryParams := map[string]string{
-				"market": fmt.Sprintf("%v", flagMarket),
+				"market": flagMarket,
 				"page":     fmt.Sprintf("%d", page),
 				"per_page": fmt.Sprintf("%d", pf.PerPage),
 			}
@@ -111,7 +112,7 @@ func runTracks(cmd *cobra.Command, args []string) error {
 
 	// Single page fetch.
 	queryParams := map[string]string{
-		"market": fmt.Sprintf("%v", flagMarket),
+		"market": flagMarket,
 		"page":     fmt.Sprintf("%d", pf.Page),
 		"per_page": fmt.Sprintf("%d", pf.PerPage),
 	}

@@ -4,7 +4,6 @@ package search
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -51,12 +50,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:       "oauth2",
-		ProfileName:    rctx.ProfileName,
-		OAuthStorePath: storePath,
+		Strategy:          "oauth2",
+		ConfigDir:         "dj",
+		ProfileName:       rctx.ProfileName,
+		AllowFileFallback: true,
+		OAuthStorePath:    storePath,
+		OAuthMetadataPath: oauthMetadataPath(storePath),
 		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL:     "https://accounts.spotify.com/api/token",
-			ClientID:     os.Getenv("DJ_CLIENT_ID"),
+			TokenURL: "https://accounts.spotify.com/api/token",
 		},
 	})
 	if err != nil {
@@ -82,11 +83,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	fullPath := client.BuildPath("/v1/search", pathParams)
 	queryParams := map[string]string{
-		"q": fmt.Sprintf("%v", flagQ),
-		"type": fmt.Sprintf("%v", flagType),
-		"market": fmt.Sprintf("%v", flagMarket),
-		"limit": fmt.Sprintf("%v", flagLimit),
-		"offset": fmt.Sprintf("%v", flagOffset),
+		"q": flagQ,
+		"type": flagType,
+		"market": flagMarket,
+	}
+	if flagLimit != 0 {
+		queryParams["limit"] = fmt.Sprintf("%d", flagLimit)
+	}
+	if flagOffset != 0 {
+		queryParams["offset"] = fmt.Sprintf("%d", flagOffset)
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 

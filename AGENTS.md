@@ -42,7 +42,7 @@ dj manifest
 | 0 | Success | Parse `data` from response |
 | 1 | API error | Check `error.code` and `error.message` |
 | 2 | Usage error | Fix command arguments or flags |
-| 3 | Auth error | Run `dj auth login` or `auth set` |
+| 3 | Auth error | Run `dj auth login` |
 | 4 | Rate limited | Wait and retry |
 | 5 | Network error | Check connectivity |
 | 6 | Config error | Check profile configuration |
