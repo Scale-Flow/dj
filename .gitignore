@@ -1,6 +1,6 @@
 bin/
-dj
-dj-linux
+/dj
+/dj-linux
 *.exe
 creds.txt
 oauth-tokens.json
