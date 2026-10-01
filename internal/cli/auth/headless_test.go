@@ -298,3 +298,24 @@ func TestConcurrentCompletionsExchangeOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCallbackBracketedPaste(t *testing.T) {
+	for _, raw := range []string{"\x1b[200~" + sampleCallback() + "\x1b[201~", " \x1b[200~" + sampleCallback() + "\x1b[201~\n"} {
+		code, err := callbackCode(raw, sampleSession())
+		if err != nil || code != "test-code" {
+			t.Fatal("bracketed paste rejected")
+		}
+	}
+}
+func TestExplicitFileStorage(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	source, err := persistOAuthLoginWithBackend("mock", oauth.ClientCredentials{ClientID: "mock-client"}, &oauth.TokenSet{AccessToken: "mock-access", RefreshToken: "mock-refresh"}, "file")
+	if err != nil || source != "file" {
+		t.Fatalf("file storage failed: %v", err)
+	}
+	p, _ := oauthStorePath()
+	i, err := os.Stat(p)
+	if err != nil || i.Mode().Perm() != 0600 {
+		t.Fatal("token file not private")
+	}
+}

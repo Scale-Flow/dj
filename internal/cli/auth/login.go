@@ -245,12 +245,16 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 }
 
 func persistOAuthLogin(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+	return persistOAuthLoginWithBackend(profile, creds, ts, "")
+}
+
+func persistOAuthLoginWithBackend(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet, selectedBackend string) (string, error) {
 	storePath, err := oauthStorePath()
 	if err != nil {
 		return "", err
 	}
 
-	backend, err := cmdutil.SelectOAuthWriteBackend("", true, true, true)
+	backend, err := cmdutil.SelectOAuthWriteBackend(selectedBackend, true, true, true)
 	if err != nil {
 		return "", err
 	}

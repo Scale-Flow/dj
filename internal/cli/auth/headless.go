@@ -42,6 +42,9 @@ func addHeadlessCommands(login *cobra.Command) {
 	for _, action := range []string{"start", "complete", "cancel"} {
 		action := action
 		cmd := &cobra.Command{Use: action, Short: map[string]string{"start": "Start a private, ten-minute headless PKCE login (no browser or relay)", "complete": "Complete headless login from a callback URL on stdin (never an argument)", "cancel": "Discard a pending headless login"}[action], Args: cobra.NoArgs}
+		if action == "complete" {
+			cmd.Flags().String("storage", "auto", "Token storage: auto or file (private config file for headless systems)")
+		}
 		if action == "start" {
 			cmd.Flags().String("client-id", "", "Spotify app Client ID (or DJ_CLIENT_ID); no client secret needed")
 		}
@@ -111,6 +114,9 @@ func loadSession(path, profile string, now time.Time) (loginSession, error) {
 }
 
 func callbackCode(raw string, s loginSession) (string, error) {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "\x1b[200~")
+	raw = strings.TrimSuffix(raw, "\x1b[201~")
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", errors.New("invalid callback URL")
@@ -273,13 +279,34 @@ func runHeadless(cmd *cobra.Command, action string) error {
 		defer stop()
 		ctx, cancel := context.WithDeadline(ctx, s.Expires)
 		defer cancel()
-		raw, err := readCallback(ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
-		if err != nil {
-			return fail(err)
+		storage, _ := cmd.Flags().GetString("storage")
+		if storage != "auto" && storage != "file" {
+			return fail(errors.New("storage must be auto or file"))
+		}
+		var raw string
+		for {
+			raw, err = readCallback(ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
+			if err != nil {
+				return fail(err)
+			}
+			if _, err = callbackCode(raw, s); err == nil {
+				break
+			}
+			f, interactive := cmd.InOrStdin().(*os.File)
+			if !interactive || !term.IsTerminal(int(f.Fd())) {
+				return fail(err)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s. Try again at the hidden prompt, or press Ctrl+C to cancel.\n", err)
 		}
 		exchangeCtx, cancelExchange := context.WithTimeout(ctx, 30*time.Second)
 		defer cancelExchange()
-		source, err := completeSession(exchangeCtx, path, s, raw, oauth.ExchangeCode, persistOAuthLogin)
+		persist := persistOAuthLogin
+		if storage == "file" {
+			persist = func(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+				return persistOAuthLoginWithBackend(profile, creds, ts, "file")
+			}
+		}
+		source, err := completeSession(exchangeCtx, path, s, raw, oauth.ExchangeCode, persist)
 		if err != nil {
 			return fail(err)
 		}

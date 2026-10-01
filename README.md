@@ -139,3 +139,8 @@ All login commands support `--dry-run` without authorization or saved state.
 
 Official references: [Spotify PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
 and [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
+
+For a VM without a working OS keychain, use `auth login complete --storage file`
+to explicitly save tokens in the private configuration file. Interactive
+completion accepts terminal bracketed-paste sequences and keeps validation
+failures at the hidden prompt so you can retry without pasting into a shell.
