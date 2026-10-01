@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"io"
 	"net/http"
@@ -65,5 +66,40 @@ func TestSpotifyDefaultEndpoint(t *testing.T) {
 	ctx, err = cliutil.ResolveSpotifyContext(cmd)
 	if err != nil || ctx.BaseURL != "https://example.test" {
 		t.Fatal("explicit endpoint overridden")
+	}
+}
+
+func TestTrackPlaybackUsesJSONArray(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	store := oauth.NewOAuthStore(filepath.Join(dir, "dj", "oauth-tokens.json"))
+	if err := store.Save("default", oauth.TokenSet{AccessToken: "mock-token", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "PUT" || r.URL.Query().Get("device_id") != "mock-device" {
+			t.Error("wrong playback target")
+		}
+		var body struct {
+			URIs []string `json:"uris"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if len(body.URIs) != 2 || body.URIs[0] != "spotify:track:one" || body.URIs[1] != "spotify:track:two" {
+			t.Error("wrong track array")
+		}
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	cmd := NewRootCmd("test")
+	cmd.SetArgs([]string{"--auth-storage", "file", "--base-url", server.URL, "player", "play", "--device-id", "mock-device", "--uris", "spotify:track:one,spotify:track:two", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("play not called")
 	}
 }

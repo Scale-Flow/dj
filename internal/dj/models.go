@@ -3,89 +3,100 @@
 package dj
 
 type Album struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	URI string `json:"uri"`
-	AlbumType string `json:"album_type"`
-	TotalTracks int `json:"total_tracks"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	AlbumType   string `json:"album_type"`
+	TotalTracks int    `json:"total_tracks"`
 	ReleaseDate string `json:"release_date"`
-	Type string `json:"type"`
+	Type        string `json:"type"`
 }
 
 type EmbeddedAlbum struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	URI string `json:"uri"`
-	AlbumType string `json:"album_type,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	AlbumType   string `json:"album_type,omitempty"`
 	ReleaseDate string `json:"release_date,omitempty"`
-	TotalTracks int `json:"total_tracks,omitempty"`
+	TotalTracks int    `json:"total_tracks,omitempty"`
 }
 
 type EmbeddedArtist struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
 	Name string `json:"name"`
-	URI string `json:"uri"`
+	URI  string `json:"uri"`
 	Type string `json:"type"`
 }
 
 type NowPlaying struct {
-	IsPlaying bool `json:"is_playing"`
-	ProgressMs int `json:"progress_ms,omitempty"`
-	Item PlaybackItem `json:"item,omitempty"`
-	CurrentlyPlayingType string `json:"currently_playing_type,omitempty"`
+	IsPlaying            bool         `json:"is_playing"`
+	ProgressMs           int          `json:"progress_ms,omitempty"`
+	Item                 PlaybackItem `json:"item,omitempty"`
+	CurrentlyPlayingType string       `json:"currently_playing_type,omitempty"`
 }
 
 type PlaybackDevice struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"`
-	IsActive bool `json:"is_active"`
-	VolumePercent int `json:"volume_percent"`
-	SupportsVolume bool `json:"supports_volume"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	IsActive       bool   `json:"is_active"`
+	VolumePercent  int    `json:"volume_percent"`
+	SupportsVolume bool   `json:"supports_volume"`
 }
 
 type PlaybackItem struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	URI string `json:"uri"`
-	DurationMs int `json:"duration_ms,omitempty"`
-	Type string `json:"type,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	URI        string `json:"uri"`
+	DurationMs int    `json:"duration_ms,omitempty"`
+	Type       string `json:"type,omitempty"`
 }
 
 type PlaybackState struct {
-	IsPlaying bool `json:"is_playing"`
-	ProgressMs int `json:"progress_ms,omitempty"`
-	Item PlaybackItem `json:"item,omitempty"`
-	ShuffleState bool `json:"shuffle_state"`
-	RepeatState string `json:"repeat_state"`
-	CurrentlyPlayingType string `json:"currently_playing_type,omitempty"`
+	IsPlaying            bool         `json:"is_playing"`
+	ProgressMs           int          `json:"progress_ms,omitempty"`
+	Item                 PlaybackItem `json:"item,omitempty"`
+	ShuffleState         bool         `json:"shuffle_state"`
+	RepeatState          string       `json:"repeat_state"`
+	CurrentlyPlayingType string       `json:"currently_playing_type,omitempty"`
+}
+
+type Page[T any] struct {
+	Items    []T     `json:"items"`
+	Total    int     `json:"total"`
+	Limit    int     `json:"limit"`
+	Offset   int     `json:"offset"`
+	Next     *string `json:"next"`
+	Previous *string `json:"previous"`
 }
 
 type SearchResult struct {
-	Tracks string `json:"tracks,omitempty"`
-	Artists string `json:"artists,omitempty"`
-	Albums string `json:"albums,omitempty"`
+	Tracks  *Page[Track]          `json:"tracks,omitempty"`
+	Artists *Page[EmbeddedArtist] `json:"artists,omitempty"`
+	Albums  *Page[Album]          `json:"albums,omitempty"`
 }
 
 type Track struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	URI string `json:"uri"`
-	DurationMs int `json:"duration_ms"`
-	TrackNumber int `json:"track_number"`
-	DiscNumber int `json:"disc_number"`
-	Explicit bool `json:"explicit"`
-	Popularity int `json:"popularity,omitempty"`
-	Type string `json:"type"`
+	Artists      []EmbeddedArtist  `json:"artists,omitempty"`
+	Album        *EmbeddedAlbum    `json:"album,omitempty"`
+	ExternalURLs map[string]string `json:"external_urls,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	URI          string            `json:"uri"`
+	DurationMs   int               `json:"duration_ms"`
+	TrackNumber  int               `json:"track_number"`
+	DiscNumber   int               `json:"disc_number"`
+	Explicit     bool              `json:"explicit"`
+	Popularity   int               `json:"popularity,omitempty"`
+	Type         string            `json:"type"`
 }
 
 type TrackSimplified struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	URI string `json:"uri"`
-	DurationMs int `json:"duration_ms"`
-	TrackNumber int `json:"track_number"`
-	DiscNumber int `json:"disc_number"`
-	Explicit bool `json:"explicit"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	DurationMs  int    `json:"duration_ms"`
+	TrackNumber int    `json:"track_number"`
+	DiscNumber  int    `json:"disc_number"`
+	Explicit    bool   `json:"explicit"`
 }
-

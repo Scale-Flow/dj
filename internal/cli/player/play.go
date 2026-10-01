@@ -4,6 +4,7 @@ package player
 
 import (
 	"github.com/spf13/cobra"
+	"strings"
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
@@ -69,7 +70,7 @@ func runPlay(cmd *cobra.Command, args []string) error {
 			body["context_uri"] = flagContextURI
 		}
 		if flagUris != "" {
-			body["uris"] = flagUris
+			body["uris"] = strings.Split(flagUris, ",")
 		}
 		if flagPositionMs != 0 {
 			body["position_ms"] = flagPositionMs
@@ -88,7 +89,7 @@ func runPlay(cmd *cobra.Command, args []string) error {
 		body["context_uri"] = flagContextURI
 	}
 	if flagUris != "" {
-		body["uris"] = flagUris
+		body["uris"] = strings.Split(flagUris, ",")
 	}
 	if flagPositionMs != 0 {
 		body["position_ms"] = flagPositionMs
