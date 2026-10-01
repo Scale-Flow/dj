@@ -3,6 +3,7 @@
 package player
 
 import (
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/spf13/cobra"
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
@@ -27,7 +28,7 @@ func newNowPlayingCmd() *cobra.Command {
 }
 
 func runNowPlaying(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -38,6 +39,7 @@ func runNowPlaying(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,

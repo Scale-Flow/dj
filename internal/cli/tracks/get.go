@@ -4,14 +4,15 @@ package tracks
 
 import (
 	"fmt"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 
 	"github.com/spf13/cobra"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func newGetCmd() *cobra.Command {
@@ -31,7 +32,7 @@ func newGetCmd() *cobra.Command {
 }
 
 func runGet(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -42,6 +43,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,

@@ -4,14 +4,15 @@ package search
 
 import (
 	"fmt"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 
 	"github.com/spf13/cobra"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 // NewSearchCmd creates the search command.
@@ -40,7 +41,7 @@ func newSearchCmd() *cobra.Command {
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -51,6 +52,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,
@@ -73,18 +75,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	flagOffset, _ := cmd.Flags().GetInt("offset")
 
 	if cmdutil.DryRun(cmd) {
-		pathParams := map[string]string{
-		}
+		pathParams := map[string]string{}
 		fullPath := client.BuildPath("/v1/search", pathParams)
 		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
 	}
 
-	pathParams := map[string]string{
-	}
+	pathParams := map[string]string{}
 	fullPath := client.BuildPath("/v1/search", pathParams)
 	queryParams := map[string]string{
-		"q": flagQ,
-		"type": flagType,
+		"q":      flagQ,
+		"type":   flagType,
 		"market": flagMarket,
 	}
 	if flagLimit != 0 {

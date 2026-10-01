@@ -144,3 +144,7 @@ For a VM without a working OS keychain, use `auth login complete --storage file`
 to explicitly save tokens in the private configuration file. Interactive
 completion accepts terminal bracketed-paste sequences and keeps validation
 failures at the hidden prompt so you can retry without pasting into a shell.
+Use `--auth-storage file` on subsequent API commands when a keychain is present
+but broken, for example `dj --auth-storage file player devices`. This explicitly
+selects file tokens rather than masking unexpected keychain failures. `auto`
+remains the default; `keychain` is also available.

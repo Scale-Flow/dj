@@ -5,13 +5,15 @@ package cli
 import (
 	"fmt"
 
+	"github.com/Scale-Flow/marten/pkg/cmdutil"
+	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/spf13/cobra"
 
+	"github.com/scale-flow/dj/internal/cli/albums"
 	"github.com/scale-flow/dj/internal/cli/auth"
 	"github.com/scale-flow/dj/internal/cli/player"
-	"github.com/scale-flow/dj/internal/cli/tracks"
-	"github.com/scale-flow/dj/internal/cli/albums"
 	"github.com/scale-flow/dj/internal/cli/search"
+	"github.com/scale-flow/dj/internal/cli/tracks"
 )
 
 func NewRootCmd(version string) *cobra.Command {
@@ -20,8 +22,16 @@ func NewRootCmd(version string) *cobra.Command {
 		Short:         "Spotify player control and music lookup CLI",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			value, _ := cmd.Flags().GetString("auth-storage")
+			if value != "auto" && value != "file" && value != "keychain" {
+				return cmdutil.WriteError(cmd, contract.ErrCodeValidation, "auth-storage must be auto, file, or keychain")
+			}
+			return nil
+		},
 	}
 
+	cmd.PersistentFlags().String("auth-storage", "auto", "OAuth credential source: auto, file, or keychain")
 	cmd.PersistentFlags().Bool("pretty", false, "Pretty-print JSON output")
 	cmd.PersistentFlags().Bool("dry-run", false, "Show what would be done without making changes")
 	cmd.PersistentFlags().Bool("yes", false, "Skip confirmation prompts")

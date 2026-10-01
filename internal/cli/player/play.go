@@ -31,7 +31,7 @@ func newPlayCmd() *cobra.Command {
 }
 
 func runPlay(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -42,6 +42,7 @@ func runPlay(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,

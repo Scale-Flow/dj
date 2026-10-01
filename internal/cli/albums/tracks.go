@@ -6,15 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"io"
 
 	"github.com/spf13/cobra"
 
-	"github.com/scale-flow/dj/internal/dj"
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
 	"github.com/Scale-Flow/marten/pkg/transport"
+	"github.com/scale-flow/dj/internal/dj"
 )
 
 func newTracksCmd() *cobra.Command {
@@ -35,7 +36,7 @@ func newTracksCmd() *cobra.Command {
 }
 
 func runTracks(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -46,6 +47,7 @@ func runTracks(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,
@@ -83,7 +85,7 @@ func runTracks(cmd *cobra.Command, args []string) error {
 	if pf.All {
 		items, meta, err := cmdutil.ListAll[dj.TrackSimplified](cmd.Context(), func(ctx context.Context, page int) ([]dj.TrackSimplified, *contract.Pagination, error) {
 			queryParams := map[string]string{
-				"market": flagMarket,
+				"market":   flagMarket,
 				"page":     fmt.Sprintf("%d", page),
 				"per_page": fmt.Sprintf("%d", pf.PerPage),
 			}
@@ -112,7 +114,7 @@ func runTracks(cmd *cobra.Command, args []string) error {
 
 	// Single page fetch.
 	queryParams := map[string]string{
-		"market": flagMarket,
+		"market":   flagMarket,
 		"page":     fmt.Sprintf("%d", pf.Page),
 		"per_page": fmt.Sprintf("%d", pf.PerPage),
 	}

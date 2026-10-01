@@ -3,6 +3,7 @@
 package player
 
 import (
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/spf13/cobra"
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
@@ -25,7 +26,7 @@ func newDevicesCmd() *cobra.Command {
 }
 
 func runDevices(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -36,6 +37,7 @@ func runDevices(cmd *cobra.Command, args []string) error {
 
 	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
 		Strategy:          "oauth2",
+		StorageBackend:    cliutil.OAuthStorage(cmd),
 		ConfigDir:         "dj",
 		ProfileName:       rctx.ProfileName,
 		AllowFileFallback: true,
@@ -61,7 +63,9 @@ func runDevices(cmd *cobra.Command, args []string) error {
 	pathParams := map[string]string{}
 	fullPath := client.BuildPath("/v1/me/player/devices", pathParams)
 
-	var result dj.PlaybackDevice
+	var result struct {
+		Devices []dj.PlaybackDevice `json:"devices"`
+	}
 	if err := client.DoGet(cmd.Context(), fullPath, &result); err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeServer, err.Error())
 	}
