@@ -8,8 +8,6 @@ import (
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
-	"github.com/Scale-Flow/marten/pkg/oauth"
-	"github.com/Scale-Flow/marten/pkg/transport"
 	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/scale-flow/dj/internal/dj"
 )
@@ -36,53 +34,11 @@ func runPlay(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
-	storePath, err := oauthStorePath()
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
-	}
-
-	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:          "oauth2",
-		StorageBackend:    cliutil.OAuthStorage(cmd),
-		ConfigDir:         "dj",
-		ProfileName:       rctx.ProfileName,
-		AllowFileFallback: true,
-		OAuthStorePath:    storePath,
-		OAuthMetadataPath: oauthMetadataPath(storePath),
-		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL: "https://accounts.spotify.com/api/token",
-		},
-	})
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
-	}
-
-	t := transport.NewClient(rctx.BaseURL, token, "Authorization", "Bearer ")
-	client := dj.NewClient(t, rctx.Extra)
+	client := dj.NewClient(nil, rctx.Extra)
 	flagDeviceID, _ := cmd.Flags().GetString("device-id")
 	flagContextURI, _ := cmd.Flags().GetString("context-uri")
 	flagUris, _ := cmd.Flags().GetString("uris")
 	flagPositionMs, _ := cmd.Flags().GetInt("position-ms")
-
-	if cmdutil.DryRun(cmd) {
-		body := map[string]any{}
-		if flagContextURI != "" {
-			body["context_uri"] = flagContextURI
-		}
-		if flagUris != "" {
-			body["uris"] = strings.Split(flagUris, ",")
-		}
-		if flagPositionMs != 0 {
-			body["position_ms"] = flagPositionMs
-		}
-		pathParams := map[string]string{}
-		fullPath := client.BuildPath("/v1/me/player/play", pathParams)
-		return cmdutil.WriteDryRun(cmd, "PUT", rctx.BaseURL+fullPath, body)
-	}
-
-	if !cliutil.ConfirmAction(cmd, "PUT /me/player/play") {
-		return nil
-	}
 
 	body := map[string]any{}
 	if flagContextURI != "" {
@@ -101,8 +57,20 @@ func runPlay(cmd *cobra.Command, args []string) error {
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 
+	if cmdutil.DryRun(cmd) {
+		return cmdutil.WriteDryRun(cmd, "PUT", rctx.BaseURL+fullPath, body)
+	}
+
+	if !cliutil.ConfirmAction(cmd, "PUT /me/player/play") {
+		return cmdutil.WriteSuccess(cmd, map[string]any{"status": "cancelled"})
+	}
+	client, err = cliutil.NewSpotifyClient(cmd, rctx)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	}
+
 	if err := client.DoMethod(cmd.Context(), "PUT", fullPath, body, nil); err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeServer, err.Error())
+		return cliutil.WriteAPIError(cmd, err)
 	}
 	return cmdutil.WriteSuccess(cmd, nil)
 }

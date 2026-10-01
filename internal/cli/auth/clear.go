@@ -4,6 +4,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,12 +12,14 @@ import (
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 )
 
 func newAuthClearCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clear",
 		Short: "Remove stored credentials",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAuthClear(cmd, args)
 		},
@@ -35,31 +38,24 @@ func runAuthClear(cmd *cobra.Command, args []string) error {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
 
+	backend := cliutil.OAuthStorage(cmd)
+	if cmdutil.DryRun(cmd) {
+		return cmdutil.WriteSuccess(cmd, map[string]any{
+			"dry_run": true, "action": "auth clear", "profile": rctx.ProfileName, "storage": backend,
+			"resources": authClearResources(backend),
+		})
+	}
+	if !cliutil.ConfirmAction(cmd, fmt.Sprintf("remove stored credentials for profile %q", rctx.ProfileName)) {
+		return cmdutil.WriteSuccess(cmd, map[string]any{"profile": rctx.ProfileName, "status": "cancelled"})
+	}
+
 	var clearErrs []error
-	keychainStore := oauth.NewKeychainStore("dj")
-	if err := keychainStore.Delete(rctx.ProfileName); err != nil {
-		if !shouldIgnoreOAuthKeychainError(err) {
-			clearErrs = append(clearErrs, err)
+	for _, store := range authClearStores(storePath, backend) {
+		if err := store.delete(rctx.ProfileName); err != nil {
+			if backend != "auto" || !store.keychain || !shouldIgnoreOAuthKeychainError(err) {
+				clearErrs = append(clearErrs, err)
+			}
 		}
-	}
-	fileStore := oauth.NewOAuthStore(storePath)
-	if err := fileStore.Delete(rctx.ProfileName); err != nil {
-		clearErrs = append(clearErrs, err)
-	}
-	metaStore := oauth.NewMetadataStore(oauth.MetadataPathForTokenStore(storePath))
-	if err := metaStore.Delete(rctx.ProfileName); err != nil {
-		clearErrs = append(clearErrs, err)
-	}
-	clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
-	clientCredKeychainStore := oauth.NewClientCredentialKeychainStore("dj")
-	if err := clientCredKeychainStore.Delete(rctx.ProfileName); err != nil {
-		if !shouldIgnoreOAuthKeychainError(err) {
-			clearErrs = append(clearErrs, err)
-		}
-	}
-	clientCredFileStore := oauth.NewClientCredentialFileStore(clientCredPath)
-	if err := clientCredFileStore.Delete(rctx.ProfileName); err != nil {
-		clearErrs = append(clearErrs, err)
 	}
 	if len(clearErrs) > 0 {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, errors.Join(clearErrs...).Error())
@@ -69,6 +65,41 @@ func runAuthClear(cmd *cobra.Command, args []string) error {
 		"profile": rctx.ProfileName,
 		"status":  "cleared",
 	})
+}
+
+func authClearResources(backend string) []string {
+	resources := []string{"oauth metadata"}
+	if backend != "file" {
+		resources = append(resources, "keychain OAuth tokens", "keychain client credentials")
+	}
+	if backend != "keychain" {
+		resources = append(resources, "file OAuth tokens", "file client credentials")
+	}
+	return resources
+}
+
+// Keep store construction behind the safety checks: dry-run and a declined
+// confirmation must not even contact a credential backend.
+type authClearStore struct {
+	delete   func(string) error
+	keychain bool
+}
+
+var authClearStores = func(storePath, backend string) []authClearStore {
+	var stores []authClearStore
+	if backend != "file" {
+		stores = append(stores,
+			authClearStore{oauth.NewKeychainStore("dj").Delete, true},
+			authClearStore{oauth.NewClientCredentialKeychainStore("dj").Delete, true},
+		)
+	}
+	if backend != "keychain" {
+		stores = append(stores,
+			authClearStore{oauth.NewOAuthStore(storePath).Delete, false},
+			authClearStore{oauth.NewClientCredentialFileStore(oauth.ClientCredentialPathForTokenStore(storePath)).Delete, false},
+		)
+	}
+	return append(stores, authClearStore{oauth.NewMetadataStore(oauth.MetadataPathForTokenStore(storePath)).Delete, false})
 }
 
 func shouldIgnoreOAuthKeychainError(err error) bool {

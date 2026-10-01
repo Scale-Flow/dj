@@ -6,14 +6,11 @@ import (
 	"os"
 
 	"github.com/scale-flow/dj/internal/cli"
-	"github.com/Scale-Flow/marten/pkg/cmdutil"
 )
 
 var version = "dev"
 
 func main() {
 	cmd := cli.NewRootCmd(version)
-	if err := cmd.Execute(); err != nil {
-		os.Exit(cmdutil.ExitCode(err))
-	}
+	os.Exit(cli.Execute(cmd))
 }

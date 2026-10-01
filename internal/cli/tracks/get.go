@@ -10,8 +10,6 @@ import (
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
-	"github.com/Scale-Flow/marten/pkg/oauth"
-	"github.com/Scale-Flow/marten/pkg/transport"
 	"github.com/scale-flow/dj/internal/dj"
 )
 
@@ -36,39 +34,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
-	storePath, err := oauthStorePath()
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
-	}
-
-	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:          "oauth2",
-		StorageBackend:    cliutil.OAuthStorage(cmd),
-		ConfigDir:         "dj",
-		ProfileName:       rctx.ProfileName,
-		AllowFileFallback: true,
-		OAuthStorePath:    storePath,
-		OAuthMetadataPath: oauthMetadataPath(storePath),
-		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL: "https://accounts.spotify.com/api/token",
-		},
-	})
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
-	}
-
-	t := transport.NewClient(rctx.BaseURL, token, "Authorization", "Bearer ")
-	client := dj.NewClient(t, rctx.Extra)
+	client := dj.NewClient(nil, rctx.Extra)
 	flagMarket, _ := cmd.Flags().GetString("market")
 	flagID, _ := cmd.Flags().GetString("id")
-
-	if cmdutil.DryRun(cmd) {
-		pathParams := map[string]string{
-			"id": fmt.Sprintf("%v", flagID),
-		}
-		fullPath := client.BuildPath("/v1/tracks/{id}", pathParams)
-		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
-	}
 
 	pathParams := map[string]string{
 		"id": fmt.Sprintf("%v", flagID),
@@ -79,9 +47,18 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 
+	if cmdutil.DryRun(cmd) {
+		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
+	}
+
+	client, err = cliutil.NewSpotifyClient(cmd, rctx)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	}
+
 	var result dj.Track
 	if err := client.DoGet(cmd.Context(), fullPath, &result); err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeServer, err.Error())
+		return cliutil.WriteAPIError(cmd, err)
 	}
 	return cmdutil.WriteSuccess(cmd, result)
 }

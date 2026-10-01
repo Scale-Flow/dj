@@ -5,7 +5,6 @@ package cliutil
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,7 +19,7 @@ func ConfirmAction(cmd *cobra.Command, action string) bool {
 		return true
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "About to %s. Continue? [y/N] ", action)
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(cmd.InOrStdin())
 	line, _ := reader.ReadString('\n')
 	return strings.TrimSpace(strings.ToLower(line)) == "y"
 }

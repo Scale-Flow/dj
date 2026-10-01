@@ -148,3 +148,26 @@ Use `--auth-storage file` on subsequent API commands when a keychain is present
 but broken, for example `dj --auth-storage file player devices`. This explicitly
 selects file tokens rather than masking unexpected keychain failures. `auto`
 remains the default; `keychain` is also available.
+
+### Safety and automation
+
+API `--dry-run` previews include the same URL, query parameters, and JSON body
+as execution, before any credential lookup, refresh, or request. `auth clear`
+also supports `--dry-run` and asks for confirmation unless `--yes` is supplied.
+`--auth-storage` applies consistently to status, login, refresh, and API calls;
+status does not migrate credentials between stores. Legacy profiles with tokens
+but no matching stored client credentials may need to log in again before refresh.
+
+`albums tracks` translates `--page` / `--per-page` into Spotify's `offset` /
+`limit`. `--all` starts at the first page and fetches up to `--max-pages`;
+pagination metadata keeps Spotify's collection total, including when truncated.
+CLI usage errors produce the JSON error envelope and exit 2. API errors retain
+their status, Spotify message, and available retry delay in `error.detail`.
+An empty playback response is represented as null data, and a null playback item
+stays null.
+
+The generated source has local correctness and security fixes. The original
+API specification and a reproducible generator release are not included in this
+repository (`.marten-version` records `dev`), so do not blindly regenerate these
+files. Recover and pin the original specification and generator before doing a
+regeneration, and run the command-level regression suite afterward.

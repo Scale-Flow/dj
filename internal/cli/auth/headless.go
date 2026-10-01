@@ -19,6 +19,7 @@ import (
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -43,7 +44,7 @@ func addHeadlessCommands(login *cobra.Command) {
 		action := action
 		cmd := &cobra.Command{Use: action, Short: map[string]string{"start": "Start a private, ten-minute headless PKCE login (no browser or relay)", "complete": "Complete headless login from a callback URL on stdin (never an argument)", "cancel": "Discard a pending headless login"}[action], Args: cobra.NoArgs}
 		if action == "complete" {
-			cmd.Flags().String("storage", "auto", "Token storage: auto or file (private config file for headless systems)")
+			cmd.Flags().String("storage", "auto", "Deprecated alias for --auth-storage: auto, file, or keychain")
 		}
 		if action == "start" {
 			cmd.Flags().String("client-id", "", "Spotify app Client ID (or DJ_CLIENT_ID); no client secret needed")
@@ -279,9 +280,9 @@ func runHeadless(cmd *cobra.Command, action string) error {
 		defer stop()
 		ctx, cancel := context.WithDeadline(ctx, s.Expires)
 		defer cancel()
-		storage, _ := cmd.Flags().GetString("storage")
-		if storage != "auto" && storage != "file" {
-			return fail(errors.New("storage must be auto or file"))
+		storage, err := headlessStorage(cmd)
+		if err != nil {
+			return fail(err)
 		}
 		var raw string
 		for {
@@ -300,11 +301,8 @@ func runHeadless(cmd *cobra.Command, action string) error {
 		}
 		exchangeCtx, cancelExchange := context.WithTimeout(ctx, 30*time.Second)
 		defer cancelExchange()
-		persist := persistOAuthLogin
-		if storage == "file" {
-			persist = func(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
-				return persistOAuthLoginWithBackend(profile, creds, ts, "file")
-			}
+		persist := func(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+			return persistOAuthLoginContext(cmd.Context(), profile, creds, ts, storage)
 		}
 		source, err := completeSession(exchangeCtx, path, s, raw, oauth.ExchangeCode, persist)
 		if err != nil {
@@ -312,4 +310,19 @@ func runHeadless(cmd *cobra.Command, action string) error {
 		}
 		return cmdutil.WriteSuccess(cmd, map[string]any{"status": "authenticated", "profile": s.Profile, "source": source})
 	}
+}
+
+// Keep the old headless-only option compatible while using one backend setting.
+func headlessStorage(cmd *cobra.Command) (string, error) {
+	storage := cliutil.OAuthStorage(cmd)
+	if alias := cmd.Flags().Lookup("storage"); alias != nil && alias.Changed {
+		if global := cmd.Flag("auth-storage"); global != nil && global.Changed && global.Value.String() != alias.Value.String() {
+			return "", errors.New("--storage and --auth-storage must select the same backend")
+		}
+		storage = alias.Value.String()
+	}
+	if storage != "auto" && storage != "file" && storage != "keychain" {
+		return "", errors.New("auth storage must be auto, file, or keychain")
+	}
+	return storage, nil
 }

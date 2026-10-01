@@ -57,9 +57,9 @@ func BuildQueryString(params map[string]string) string {
 func (c *Client) DoGet(ctx context.Context, path string, target any) error {
 	resp, err := c.t.DoWithRetry(ctx, "GET", path, nil)
 	if err != nil {
-		return fmt.Errorf("get %s: %w", path, err)
+		return networkError("get "+path, err)
 	}
-	return c.t.DecodeResponse(resp, target)
+	return decodeResponse(resp, target)
 }
 
 // DoPost marshals body as JSON, performs a POST request, and decodes the response into target.
@@ -70,15 +70,22 @@ func (c *Client) DoPost(ctx context.Context, path string, body any, target any) 
 	}
 	resp, err := c.t.Do(ctx, "POST", path, data)
 	if err != nil {
-		return fmt.Errorf("post %s: %w", path, err)
+		return networkError("post "+path, err)
 	}
-	return c.t.DecodeResponse(resp, target)
+	return decodeResponse(resp, target)
 }
 
 // DoGetRaw performs a GET request and returns the raw HTTP response.
 // The caller is responsible for closing the response body.
 func (c *Client) DoGetRaw(ctx context.Context, path string) (*http.Response, error) {
-	return c.t.DoWithRetry(ctx, "GET", path, nil)
+	resp, err := c.t.DoWithRetry(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, networkError("get "+path, err)
+	}
+	if err := checkResponse(resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // DoMethod performs an HTTP request with the given method and JSON body.
@@ -93,16 +100,16 @@ func (c *Client) DoMethod(ctx context.Context, method, path string, body any, ta
 	}
 	resp, err := c.t.Do(ctx, method, path, reqBody)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", strings.ToLower(method), path, err)
+		return networkError(strings.ToLower(method)+" "+path, err)
 	}
-	return c.t.DecodeResponse(resp, target)
+	return decodeResponse(resp, target)
 }
 
 // DoPostForm performs a POST request with form-encoded body.
 func (c *Client) DoPostForm(ctx context.Context, path string, fields map[string]string, target any) error {
 	resp, err := c.t.DoForm(ctx, "POST", path, fields)
 	if err != nil {
-		return fmt.Errorf("post form %s: %w", path, err)
+		return networkError("post form "+path, err)
 	}
-	return c.t.DecodeResponse(resp, target)
+	return decodeResponse(resp, target)
 }

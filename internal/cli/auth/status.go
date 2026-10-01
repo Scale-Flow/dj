@@ -4,7 +4,6 @@ package auth
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +11,7 @@ import (
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 )
 
 func newAuthStatusCmd() *cobra.Command {
@@ -35,23 +35,25 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
-	keychainStore := oauth.NewKeychainStore("dj")
-	fileStore := oauth.NewOAuthStore(storePath)
-	ts, source, err := loadOAuthStatusToken(rctx.ProfileName, keychainStore, fileStore)
+	ts, creds, source, err := cliutil.LoadOAuthStatus(cmd.Context(), cmdutil.AuthConfig{
+		ConfigDir: "dj", ProfileName: rctx.ProfileName,
+		OAuthStorePath: storePath, StorageBackend: cliutil.OAuthStorage(cmd),
+		AllowFileFallback: true,
+	})
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
 	if ts == nil {
 		return cmdutil.WriteSuccess(cmd, map[string]any{
-			"authenticated": false,
-			"profile":       rctx.ProfileName,
-			"source":        "",
-			"token":         "",
-			"scopes":        []string{},
-			"expired":       false,
-			"expires_at":    "",
-			"expires_in_seconds": 0,
-			"has_refresh_token": false,
+			"authenticated":             false,
+			"profile":                   rctx.ProfileName,
+			"source":                    "",
+			"token":                     "",
+			"scopes":                    []string{},
+			"expired":                   false,
+			"expires_at":                "",
+			"expires_in_seconds":        0,
+			"has_refresh_token":         false,
 			"client_credentials_stored": false,
 			"client_credentials_source": "",
 		})
@@ -64,7 +66,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 
 	scopes := ts.Scopes
 	expiresAt := ts.ExpiresAt
-	if meta != nil {
+	if meta != nil && creds != nil && meta.ClientID == creds.ClientID {
 		if len(scopes) == 0 && len(meta.Scopes) > 0 {
 			scopes = meta.Scopes
 		}
@@ -73,31 +75,20 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	clientCredStored := false
+	clientCredStored := creds != nil
 	clientCredSource := ""
-	if storePath != "" {
-		clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
-		keychainCredStore := oauth.NewClientCredentialKeychainStore("dj")
-		if _, err := keychainCredStore.Load(rctx.ProfileName); err == nil {
-			clientCredStored = true
-			clientCredSource = "keychain"
-		} else {
-			fileCredStore := oauth.NewClientCredentialFileStore(clientCredPath)
-			if _, err := fileCredStore.Load(rctx.ProfileName); err == nil {
-				clientCredStored = true
-				clientCredSource = "file"
-			}
-		}
+	if clientCredStored {
+		clientCredSource = string(source)
 	}
 
 	result := map[string]any{
-		"authenticated": true,
-		"profile":       rctx.ProfileName,
-		"source":        string(source),
-		"token":         maskToken(ts.AccessToken),
-		"scopes":        scopes,
-		"expired":       !expiresAt.IsZero() && time.Now().After(expiresAt),
-		"expires_at":    "",
+		"authenticated":      true,
+		"profile":            rctx.ProfileName,
+		"source":             string(source),
+		"token":              maskToken(ts.AccessToken),
+		"scopes":             scopes,
+		"expired":            !expiresAt.IsZero() && time.Now().After(expiresAt),
+		"expires_at":         "",
 		"expires_in_seconds": 0,
 	}
 	if !expiresAt.IsZero() {
@@ -115,48 +106,4 @@ func maskToken(token string) string {
 		return "****"
 	}
 	return token[:4] + "..." + token[len(token)-4:]
-}
-
-func loadOAuthStatusToken(profile string, keychainStore, fileStore oauth.Store) (*oauth.TokenSet, cmdutil.CredentialBackend, error) {
-	ts, err := keychainStore.Load(profile)
-	if err == nil {
-		return ts, cmdutil.CredentialBackendKeychain, nil
-	}
-	keychainErr := err
-	if errors.Is(err, oauth.ErrTokenNotFound) {
-		ts, availableInPrimary, err := oauth.LoadMigrating(profile, keychainStore, fileStore)
-		if err == nil {
-			if availableInPrimary {
-				return ts, cmdutil.CredentialBackendKeychain, nil
-			}
-			return ts, cmdutil.CredentialBackendFile, nil
-		}
-		if !errors.Is(err, oauth.ErrTokenNotFound) {
-			return nil, "", err
-		}
-	}
-
-	ts, err = fileStore.Load(profile)
-	if err == nil {
-		return ts, cmdutil.CredentialBackendFile, nil
-	}
-	if !errors.Is(err, oauth.ErrTokenNotFound) {
-		return nil, "", err
-	}
-	if keychainErr != nil && !errors.Is(keychainErr, oauth.ErrTokenNotFound) && !shouldIgnoreOAuthStatusKeychainError(keychainErr) {
-		return nil, "", keychainErr
-	}
-	return nil, "", nil
-}
-
-func shouldIgnoreOAuthStatusKeychainError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unsupported platform") ||
-		strings.Contains(msg, "keychain backend unavailable") ||
-		strings.Contains(msg, "credential backend unavailable") ||
-		strings.Contains(msg, "no credential backend available") ||
-		strings.Contains(msg, "the name org.freedesktop.secrets was not provided by any .service files")
 }

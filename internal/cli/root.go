@@ -53,5 +53,20 @@ func NewRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(albums.NewAlbumsCmd())
 	cmd.AddCommand(search.NewSearchCmd())
 
+	validateArgs(cmd)
 	return cmd
+}
+
+// No command accepts positional arguments. Cobra otherwise silently ignores
+// unexpected words on runnable leaf commands.
+func validateArgs(cmd *cobra.Command) {
+	if !cmd.Runnable() {
+		cmd.RunE = func(cmd *cobra.Command, args []string) error { return cmd.Help() }
+	}
+	if cmd.Args == nil {
+		cmd.Args = cobra.NoArgs
+	}
+	for _, child := range cmd.Commands() {
+		validateArgs(child)
+	}
 }

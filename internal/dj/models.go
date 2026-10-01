@@ -29,10 +29,10 @@ type EmbeddedArtist struct {
 }
 
 type NowPlaying struct {
-	IsPlaying            bool         `json:"is_playing"`
-	ProgressMs           int          `json:"progress_ms,omitempty"`
-	Item                 PlaybackItem `json:"item,omitempty"`
-	CurrentlyPlayingType string       `json:"currently_playing_type,omitempty"`
+	IsPlaying            bool          `json:"is_playing"`
+	ProgressMs           int           `json:"progress_ms,omitempty"`
+	Item                 *PlaybackItem `json:"item"`
+	CurrentlyPlayingType string        `json:"currently_playing_type,omitempty"`
 }
 
 type PlaybackDevice struct {
@@ -53,12 +53,13 @@ type PlaybackItem struct {
 }
 
 type PlaybackState struct {
-	IsPlaying            bool         `json:"is_playing"`
-	ProgressMs           int          `json:"progress_ms,omitempty"`
-	Item                 PlaybackItem `json:"item,omitempty"`
-	ShuffleState         bool         `json:"shuffle_state"`
-	RepeatState          string       `json:"repeat_state"`
-	CurrentlyPlayingType string       `json:"currently_playing_type,omitempty"`
+	Device               *PlaybackDevice `json:"device,omitempty"`
+	IsPlaying            bool            `json:"is_playing"`
+	ProgressMs           int             `json:"progress_ms,omitempty"`
+	Item                 *PlaybackItem   `json:"item"`
+	ShuffleState         bool            `json:"shuffle_state"`
+	RepeatState          string          `json:"repeat_state"`
+	CurrentlyPlayingType string          `json:"currently_playing_type,omitempty"`
 }
 
 type Page[T any] struct {
