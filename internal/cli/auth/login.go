@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +16,7 @@ import (
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
 	"github.com/Scale-Flow/marten/pkg/oauth"
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 )
 
 func newAuthLoginCmd() *cobra.Command {
@@ -27,11 +27,27 @@ func newAuthLoginCmd() *cobra.Command {
 			return runAuthLogin(cmd, args)
 		},
 	}
-	cmd.Flags().Bool("local", false, "Use localhost callback server instead of manual code paste")
+	cmd.Flags().Bool("local", false, "Use loopback callback server instead of the HTTPS relay")
+	cmd.Flags().Duration("timeout", 2*time.Minute, "Maximum login duration (positive, at most 10m)")
+	cmd.Args = cobra.NoArgs
+	addHeadlessCommands(cmd)
 	return cmd
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if timeout <= 0 || timeout > 10*time.Minute {
+		return cmdutil.WriteError(cmd, contract.ErrCodeValidation, "timeout must be positive and at most 10m")
+	}
+	dry, _ := cmd.Flags().GetBool("dry-run")
+	if dry {
+		return cmdutil.WriteSuccess(cmd, map[string]any{"dry_run": true, "action": "auth login"})
+	}
+	signalCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(signalCtx, timeout)
+	defer cancel()
+	cmd.SetContext(ctx)
 	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
@@ -39,6 +55,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	creds, err := resolveClientCredentials(cmd, rctx.ProfileName)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login timed out or was cancelled; start a new login")
+		}
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
 	useLocal, _ := cmd.Flags().GetBool("local")
@@ -50,6 +69,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 }
 
 func resolveClientCredentials(cmd *cobra.Command, profile string) (oauth.ClientCredentials, error) {
+	if err := cmd.Context().Err(); err != nil {
+		return oauth.ClientCredentials{}, err
+	}
 	// 1. Env vars always win
 	envID := os.Getenv("DJ_CLIENT_ID")
 	envSecret := os.Getenv("DJ_CLIENT_SECRET")
@@ -60,13 +82,18 @@ func resolveClientCredentials(cmd *cobra.Command, profile string) (oauth.ClientC
 	// 2. Check stored credentials
 	storePath, err := oauthStorePath()
 	if err == nil {
-		clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
-		creds := cmdutil.LoadClientCredentials("dj", clientCredPath, profile)
+		creds, err := cliutil.LoadClientCredentials(cmd.Context(), "dj", storePath, profile, cliutil.OAuthStorage(cmd))
+		if err != nil {
+			return oauth.ClientCredentials{}, err
+		}
 		if creds != nil {
 			in, ok := cmd.InOrStdin().(*os.File)
 			if ok && cmdutil.IsInteractiveInput(in) {
-				update, promptErr := cmdutil.ConfirmPrompt(in, cmd.ErrOrStderr(), "Stored credentials found. Update? [y/N]: ")
-				if promptErr == nil && !update {
+				update, promptErr := confirmCredentialUpdate(cmd.Context(), in, cmd.ErrOrStderr())
+				if promptErr != nil {
+					return oauth.ClientCredentials{}, promptErr
+				}
+				if !update {
 					return *creds, nil
 				}
 			} else {
@@ -76,17 +103,19 @@ func resolveClientCredentials(cmd *cobra.Command, profile string) (oauth.ClientC
 	}
 
 	// 3. Interactive prompt
-	clientID, err := cmdutil.ResolveEnvOrPrompt(cmd, "DJ_CLIENT_ID", "Client ID", false, true)
+	clientID, err := resolveEnvOrPrompt(cmd, "DJ_CLIENT_ID", "Client ID", false, true)
 	if err != nil {
 		return oauth.ClientCredentials{}, err
 	}
 	clientSecret := ""
-	clientSecret, err = cmdutil.ResolveEnvOrPrompt(cmd, "DJ_CLIENT_SECRET", "Client Secret", true, false)
+	clientSecret, err = resolveEnvOrPrompt(cmd, "DJ_CLIENT_SECRET", "Client Secret", true, false)
 	if err != nil {
 		return oauth.ClientCredentials{}, err
 	}
 	return oauth.ClientCredentials{ClientID: clientID, ClientSecret: clientSecret}, nil
 }
+
+var pollForAuthCode = oauth.PollForCode
 
 func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCredentials) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -100,8 +129,8 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
-		Quirks:       oauth.Quirks{
+		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state"},
+		Quirks: oauth.Quirks{
 			ForceConsent: false,
 		},
 	}
@@ -116,34 +145,55 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 	// Race: poll the passthrough service vs manual paste.
 	// Whichever delivers the code first wins.
 	codeCh := make(chan string, 2)
+	errCh := make(chan error, 1)
 	// Start polling the passthrough service in the background
 	pollCtx, pollCancel := context.WithCancel(ctx)
 	defer pollCancel()
 	go func() {
-		code, err := oauth.PollForCode(pollCtx, "https://martencli.netlify.app/api/poll", result.State, 2*time.Second, 120*time.Second)
+		code, err := pollForAuthCode(pollCtx, "https://martencli.netlify.app/api/poll", result.State, 2*time.Second, 120*time.Second)
 		if err == nil {
 			codeCh <- code
+		} else {
+			errCh <- err
 		}
 	}()
 
-	// Start paste prompt in parallel (only if interactive)
+	// The paste reader must finish and restore terminal state before any result
+	// is printed, including when the relay wins the race.
+	promptCtx, promptCancel := context.WithCancel(ctx)
+	promptDone := make(chan struct{})
+	promptErrCh := make(chan error, 1)
 	in, ok := cmd.InOrStdin().(*os.File)
 	isInteractive := ok && cmdutil.IsInteractiveInput(in)
 	if isInteractive {
 		go func() {
-			code, err := oauth.PromptForCode(in, cmd.ErrOrStderr())
-			if err == nil {
+			defer close(promptDone)
+			code, err := readTerminalPrompt(promptCtx, in, cmd.ErrOrStderr(), "Paste the authorization code: ", true)
+			if err == nil && code != "" {
 				codeCh <- code
+			} else if err != nil {
+				promptErrCh <- err
 			}
 		}()
+	} else {
+		close(promptDone)
 	}
 
-	// Wait for whichever completes first
-	var code string
+	var code, failure string
 	select {
 	case code = <-codeCh:
+	case <-errCh:
+		failure = "login relay failed or timed out; retry, or use auth login start for headless PKCE"
+	case <-promptErrCh:
+		failure = "login input failed or was cancelled; start a new login"
 	case <-ctx.Done():
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
+		failure = "login timed out or was cancelled; start a new login"
+	}
+	promptCancel()
+	<-promptDone
+	pollCancel()
+	if failure != "" {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, failure)
 	}
 
 	ts, err := oauth.ExchangeCode(ctx, cfg, code, result.Verifier)
@@ -151,7 +201,7 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
 
-	source, err := persistOAuthLogin(profile, creds, ts)
+	source, err := persistOAuthLoginForCommand(cmd, profile, creds, ts)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -177,24 +227,24 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
-		Quirks:       oauth.Quirks{
+		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state"},
+		Quirks: oauth.Quirks{
 			ForceConsent: false,
 		},
 	}
 
-	authURL, verifier, err := oauth.BuildAuthURL(cfg)
+	authResult, err := oauth.BuildAuthURLWithState(cfg)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
 
-	cb, err := oauth.StartCallbackServer(redirectPort)
+	cb, err := startValidatedCallbackServer(redirectPort, authResult.State)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, fmt.Sprintf("start callback server: %s", err))
 	}
 	defer cb.Close()
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization (Ctrl+C to cancel)...\n", authURL)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization (Ctrl+C to cancel)...\n", authResult.URL)
 
 	var code string
 	select {
@@ -202,15 +252,15 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 	case err := <-cb.ErrCh:
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	case <-ctx.Done():
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login timed out or was cancelled; start a new login")
 	}
 
-	ts, err := oauth.ExchangeCode(ctx, cfg, code, verifier)
+	ts, err := oauth.ExchangeCode(ctx, cfg, code, authResult.Verifier)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
 
-	source, err := persistOAuthLogin(profile, creds, ts)
+	source, err := persistOAuthLoginForCommand(cmd, profile, creds, ts)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
@@ -224,67 +274,26 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 }
 
 func persistOAuthLogin(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+	return persistOAuthLoginWithBackend(profile, creds, ts, "auto")
+}
+
+func persistOAuthLoginForCommand(cmd *cobra.Command, profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet) (string, error) {
+	return persistOAuthLoginContext(cmd.Context(), profile, creds, ts, cliutil.OAuthStorage(cmd))
+}
+
+func persistOAuthLoginWithBackend(profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet, selectedBackend string) (string, error) {
+	return persistOAuthLoginContext(context.Background(), profile, creds, ts, selectedBackend)
+}
+
+func persistOAuthLoginContext(ctx context.Context, profile string, creds oauth.ClientCredentials, ts *oauth.TokenSet, selectedBackend string) (string, error) {
 	storePath, err := oauthStorePath()
 	if err != nil {
 		return "", err
 	}
-
-	backend, err := cmdutil.SelectOAuthWriteBackend("", true, true, true)
-	if err != nil {
-		return "", err
-	}
-
-	fileStore := oauth.NewOAuthStore(storePath)
-	var store oauth.Store
-	switch backend {
-	case cmdutil.CredentialBackendKeychain:
-		store = oauth.NewKeychainStore("dj")
-	case cmdutil.CredentialBackendFile:
-		store = fileStore
-	default:
-		return "", fmt.Errorf("unsupported oauth backend %q", backend)
-	}
-
-	if err := store.Save(profile, *ts); err != nil {
-		if backend == cmdutil.CredentialBackendKeychain && shouldFallbackOAuthLoginToFile(err) {
-			if err := fileStore.Save(profile, *ts); err != nil {
-				return "", err
-			}
-			store = fileStore
-			backend = cmdutil.CredentialBackendFile
-		} else {
-			return "", err
-		}
-	}
-
-	metaStore := oauth.NewMetadataStore(oauthMetadataPath(storePath))
-	if err := metaStore.Save(profile, oauth.MergeMetadata(oauth.Metadata{}, ts, creds.ClientID)); err != nil {
-		if deleteErr := store.Delete(profile); deleteErr != nil {
-			return "", errors.Join(err, deleteErr)
-		}
-		return "", err
-	}
-
-	// Persist client credentials (same backend selection + fallback as tokens)
-	clientCredPath := oauth.ClientCredentialPathForTokenStore(storePath)
-	clientCredFileStore := oauth.NewClientCredentialFileStore(clientCredPath)
-	switch backend {
-	case cmdutil.CredentialBackendKeychain:
-		clientCredKeychainStore := oauth.NewClientCredentialKeychainStore("dj")
-		if credErr := clientCredKeychainStore.Save(profile, creds); credErr != nil {
-			if shouldFallbackOAuthLoginToFile(credErr) {
-				if fileErr := clientCredFileStore.Save(profile, creds); fileErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: could not persist client credentials: %s\n", fileErr)
-				}
-			}
-		}
-	case cmdutil.CredentialBackendFile:
-		if fileErr := clientCredFileStore.Save(profile, creds); fileErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not persist client credentials: %s\n", fileErr)
-		}
-	}
-
-	return string(backend), nil
+	return cliutil.PersistOAuthLogin(ctx, cmdutil.AuthConfig{
+		ConfigDir: "dj", ProfileName: profile, OAuthStorePath: storePath,
+		StorageBackend: selectedBackend, AllowFileFallback: true,
+	}, creds, ts)
 }
 
 func oauthStorePath() (string, error) {
@@ -300,16 +309,4 @@ func oauthStorePath() (string, error) {
 
 func oauthMetadataPath(tokenPath string) string {
 	return oauth.MetadataPathForTokenStore(tokenPath)
-}
-
-func shouldFallbackOAuthLoginToFile(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unsupported platform") ||
-		strings.Contains(msg, "keychain backend unavailable") ||
-		strings.Contains(msg, "credential backend unavailable") ||
-		strings.Contains(msg, "no credential backend available") ||
-		strings.Contains(msg, "the name org.freedesktop.secrets was not provided by any .service files")
 }

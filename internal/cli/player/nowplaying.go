@@ -3,12 +3,11 @@
 package player
 
 import (
+	"github.com/scale-flow/dj/internal/cli/cliutil"
 	"github.com/spf13/cobra"
 
 	"github.com/Scale-Flow/marten/pkg/cmdutil"
 	"github.com/Scale-Flow/marten/pkg/contract"
-	"github.com/Scale-Flow/marten/pkg/oauth"
-	"github.com/Scale-Flow/marten/pkg/transport"
 	"github.com/scale-flow/dj/internal/dj"
 )
 
@@ -27,39 +26,12 @@ func newNowPlayingCmd() *cobra.Command {
 }
 
 func runNowPlaying(cmd *cobra.Command, args []string) error {
-	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
+	rctx, err := cliutil.ResolveSpotifyContext(cmd)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
 	}
-	storePath, err := oauthStorePath()
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
-	}
-
-	token, err := cmdutil.ResolveAuth(cmd.Context(), cmdutil.AuthConfig{
-		Strategy:          "oauth2",
-		ConfigDir:         "dj",
-		ProfileName:       rctx.ProfileName,
-		AllowFileFallback: true,
-		OAuthStorePath:    storePath,
-		OAuthMetadataPath: oauthMetadataPath(storePath),
-		RefreshConfig: &oauth.RefreshConfig{
-			TokenURL: "https://accounts.spotify.com/api/token",
-		},
-	})
-	if err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
-	}
-
-	t := transport.NewClient(rctx.BaseURL, token, "Authorization", "Bearer ")
-	client := dj.NewClient(t, rctx.Extra)
+	client := dj.NewClient(nil, rctx.Extra)
 	flagMarket, _ := cmd.Flags().GetString("market")
-
-	if cmdutil.DryRun(cmd) {
-		pathParams := map[string]string{}
-		fullPath := client.BuildPath("/v1/me/player/currently-playing", pathParams)
-		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
-	}
 
 	pathParams := map[string]string{}
 	fullPath := client.BuildPath("/v1/me/player/currently-playing", pathParams)
@@ -68,9 +40,18 @@ func runNowPlaying(cmd *cobra.Command, args []string) error {
 	}
 	fullPath += dj.BuildQueryString(queryParams)
 
-	var result dj.NowPlaying
+	if cmdutil.DryRun(cmd) {
+		return cmdutil.WriteDryRun(cmd, "GET", rctx.BaseURL+fullPath, nil)
+	}
+
+	client, err = cliutil.NewSpotifyClient(cmd, rctx)
+	if err != nil {
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
+	}
+
+	var result *dj.NowPlaying
 	if err := client.DoGet(cmd.Context(), fullPath, &result); err != nil {
-		return cmdutil.WriteError(cmd, contract.ErrCodeServer, err.Error())
+		return cliutil.WriteAPIError(cmd, err)
 	}
 	return cmdutil.WriteSuccess(cmd, result)
 }
