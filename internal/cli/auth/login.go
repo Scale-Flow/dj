@@ -27,11 +27,25 @@ func newAuthLoginCmd() *cobra.Command {
 			return runAuthLogin(cmd, args)
 		},
 	}
-	cmd.Flags().Bool("local", false, "Use localhost callback server instead of manual code paste")
+	cmd.Flags().Bool("local", false, "Use loopback callback server instead of the HTTPS relay")
+	cmd.Flags().Duration("timeout", 2*time.Minute, "Maximum login duration (positive, at most 10m)")
+	cmd.Args = cobra.NoArgs
+	addHeadlessCommands(cmd)
 	return cmd
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if timeout <= 0 || timeout > 10*time.Minute {
+		return cmdutil.WriteError(cmd, contract.ErrCodeValidation, "timeout must be positive and at most 10m")
+	}
+	dry, _ := cmd.Flags().GetBool("dry-run")
+	if dry {
+		return cmdutil.WriteSuccess(cmd, map[string]any{"dry_run": true, "action": "auth login"})
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	defer cancel()
+	cmd.SetContext(ctx)
 	rctx, err := cmdutil.ResolveContext(cmd, "dj", "DJ")
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeConfig, err.Error())
@@ -88,6 +102,8 @@ func resolveClientCredentials(cmd *cobra.Command, profile string) (oauth.ClientC
 	return oauth.ClientCredentials{ClientID: clientID, ClientSecret: clientSecret}, nil
 }
 
+var pollForAuthCode = oauth.PollForCode
+
 func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCredentials) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
@@ -100,8 +116,8 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
-		Quirks:       oauth.Quirks{
+		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state"},
+		Quirks: oauth.Quirks{
 			ForceConsent: false,
 		},
 	}
@@ -116,13 +132,16 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 	// Race: poll the passthrough service vs manual paste.
 	// Whichever delivers the code first wins.
 	codeCh := make(chan string, 2)
+	errCh := make(chan error, 1)
 	// Start polling the passthrough service in the background
 	pollCtx, pollCancel := context.WithCancel(ctx)
 	defer pollCancel()
 	go func() {
-		code, err := oauth.PollForCode(pollCtx, "https://martencli.netlify.app/api/poll", result.State, 2*time.Second, 120*time.Second)
+		code, err := pollForAuthCode(pollCtx, "https://martencli.netlify.app/api/poll", result.State, 2*time.Second, 120*time.Second)
 		if err == nil {
 			codeCh <- code
+		} else {
+			errCh <- err
 		}
 	}()
 
@@ -142,8 +161,10 @@ func runManualCodeFlow(cmd *cobra.Command, profile string, creds oauth.ClientCre
 	var code string
 	select {
 	case code = <-codeCh:
+	case <-errCh:
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login relay failed or timed out; retry, or use auth login start for headless PKCE")
 	case <-ctx.Done():
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login timed out or was cancelled; start a new login")
 	}
 
 	ts, err := oauth.ExchangeCode(ctx, cfg, code, result.Verifier)
@@ -177,24 +198,24 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state" },
-		Quirks:       oauth.Quirks{
+		Scopes:       []string{"user-read-currently-playing", "user-read-playback-state", "user-modify-playback-state"},
+		Quirks: oauth.Quirks{
 			ForceConsent: false,
 		},
 	}
 
-	authURL, verifier, err := oauth.BuildAuthURL(cfg)
+	authResult, err := oauth.BuildAuthURLWithState(cfg)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
 
-	cb, err := oauth.StartCallbackServer(redirectPort)
+	cb, err := startValidatedCallbackServer(redirectPort, authResult.State)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, fmt.Sprintf("start callback server: %s", err))
 	}
 	defer cb.Close()
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization (Ctrl+C to cancel)...\n", authURL)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Open this URL in your browser:\n\n  %s\n\nWaiting for authorization (Ctrl+C to cancel)...\n", authResult.URL)
 
 	var code string
 	select {
@@ -202,10 +223,10 @@ func runLocalCallbackFlow(cmd *cobra.Command, profile string, creds oauth.Client
 	case err := <-cb.ErrCh:
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	case <-ctx.Done():
-		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login cancelled")
+		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, "login timed out or was cancelled; start a new login")
 	}
 
-	ts, err := oauth.ExchangeCode(ctx, cfg, code, verifier)
+	ts, err := oauth.ExchangeCode(ctx, cfg, code, authResult.Verifier)
 	if err != nil {
 		return cmdutil.WriteError(cmd, contract.ErrCodeAuth, err.Error())
 	}
